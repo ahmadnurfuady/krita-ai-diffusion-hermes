@@ -127,11 +127,11 @@ class Arch(Enum):
                 return Arch.qwen_e_p
             else:
                 return Arch.qwen_e
-        if string == "qwen-image" and "layered" in filename:
+        if (string == "qwen-image" or "qwen" in filename) and "layered" in filename:
             return Arch.qwen_l
         if string == "qwen-image":
             return Arch.qwen
-        if string == "qwen-image21":
+        if string == "qwen-image21" or ("qwen" in filename and ("2.1" in filename or "image21" in filename)):
             return Arch.qwen2
         if string == "anima" or (string == "unknown" and "anima" in filename):
             return Arch.anima
@@ -145,6 +145,15 @@ class Arch(Enum):
 
     @staticmethod
     def from_checkpoint_name(checkpoint: str):
+        cp_lower = checkpoint.lower()
+        if "qwen" in cp_lower:
+            if "layered" in cp_lower:
+                return Arch.qwen_l
+            if "2.1" in cp_lower or "image21" in cp_lower or "qwen2" in cp_lower:
+                return Arch.qwen2
+            if "edit" in cp_lower:
+                return Arch.qwen_e
+            return Arch.qwen
         if Arch.sdxl.matches(checkpoint):
             return Arch.sdxl
         return Arch.sd15
@@ -171,7 +180,7 @@ class Arch(Enum):
 
     def resolve(self, checkpoint: str):
         if self is Arch.auto:
-            return Arch.sdxl if Arch.sdxl.matches(checkpoint) else Arch.sd15
+            return Arch.from_checkpoint_name(checkpoint)
         return self
 
     @property
