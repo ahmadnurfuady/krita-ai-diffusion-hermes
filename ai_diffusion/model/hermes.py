@@ -456,7 +456,14 @@ class HermesModel(QObject, ObservableProperties):
         if model is None:
             return "Error: No document model available"
 
-        structure = args["structure"]
+        structure = args.get("structure", [])
+        # Guard: model sometimes sends a JSON schema dict instead of a list
+        if isinstance(structure, dict):
+            log.warning(f"[Hermes] _tool_plan_layers got dict for 'structure': {structure}")
+            return "Error: 'structure' must be a list of layer objects. Please retry with the correct format."
+        if not isinstance(structure, list) or len(structure) == 0:
+            return "Error: 'structure' is empty or missing. Provide a list of layer definitions."
+
         created = []
 
         try:
@@ -466,21 +473,26 @@ class HermesModel(QObject, ObservableProperties):
             bounds = Bounds(0, 0, *extent)
 
             for entry in structure:
-                name = entry["name"]
+                if not isinstance(entry, dict):
+                    log.warning(f"[Hermes] Skipping non-dict layer entry: {entry}")
+                    continue
+                name = entry.get("name") or entry.get("layer_name") or entry.get("title", "Unnamed Layer")
                 ltype = entry.get("type", "paint")
 
                 if ltype == "group":
                     layer = model.layers.create_group(name)
                     children = entry.get("children", [])
-                    for child_name in children:
+                    for child in children:
+                        child_name = child if isinstance(child, str) else child.get("name", "Child Layer")
                         model.layers.create(child_name, empty, bounds, parent=layer)
                     created.append(f"Group '{name}' with {len(children)} children")
                 else:
                     model.layers.create(name, empty, bounds)
                     created.append(f"Layer '{name}'")
 
-            return "Created layer structure:\n" + "\n".join(f"  • {c}" for c in created)
+            return "Created layer structure:\n" + "\n".join(f"  \u2022 {c}" for c in created)
         except Exception as e:
+            log.exception("[Hermes] _tool_plan_layers exception")
             return f"Failed to create layer structure: {e}"
 
     async def _tool_generate_layered(self, args: dict) -> str:
@@ -488,8 +500,14 @@ class HermesModel(QObject, ObservableProperties):
         if model is None:
             return "Error: No document model available"
 
-        subject = args["subject_prompt"]
-        layers_spec = args["layers"]
+        log.debug(f"[Hermes] _tool_generate_layered args keys: {list(args.keys())}")
+
+        # Accept either 'subject_prompt' or plain 'prompt'
+        subject = args.get("subject_prompt") or args.get("prompt") or args.get("description", "")
+        if not subject:
+            return "Error: missing prompt — provide 'subject_prompt' or 'prompt'"
+
+        layers_spec = args.get("layers") or args.get("layer_list") or []
         negative = args.get("negative_prompt", "")
         seed = args.get("seed", -1)
 
