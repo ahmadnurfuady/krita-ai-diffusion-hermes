@@ -81,11 +81,19 @@ def test_hermes_settings():
     s = Settings()
     assert hasattr(s, "hermes_url")
     assert hasattr(s, "hermes_enabled")
+    assert hasattr(s, "hermes_model")
+    assert hasattr(s, "hermes_api_key")
     assert s.hermes_url == ""
     assert s.hermes_enabled is True
+    assert s.hermes_model == "hermes"
+    assert s.hermes_api_key == ""
 
     s.hermes_url = "http://127.0.0.1:8080"
+    s.hermes_model = "nousresearch/hermes-3-llama-3.1-8b"
+    s.hermes_api_key = "sk-test-123"
     assert s.hermes_url == "http://127.0.0.1:8080"
+    assert s.hermes_model == "nousresearch/hermes-3-llama-3.1-8b"
+    assert s.hermes_api_key == "sk-test-123"
     s.hermes_enabled = False
     assert s.hermes_enabled is False
 

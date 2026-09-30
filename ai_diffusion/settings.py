@@ -495,6 +495,24 @@ class Settings(QObject):
         ),
     )
 
+    hermes_model: str
+    _hermes_model = Setting(
+        _("Hermes Model Name"),
+        "hermes",
+        _(
+            "Model name sent to the server (e.g. hermes, hermes3:8b, NousResearch/Hermes-3-Llama-3.1-8B)"
+        ),
+    )
+
+    hermes_api_key: str
+    _hermes_api_key = Setting(
+        _("Hermes API Key"),
+        "",
+        _(
+            "API key for cloud-hosted Hermes services (e.g. OpenRouter, Together AI, etc.)"
+        ),
+    )
+
     hermes_enabled: bool
     _hermes_enabled = Setting(
         _("Enable Hermes Agent"),

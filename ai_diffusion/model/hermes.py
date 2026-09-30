@@ -65,8 +65,11 @@ class HermesModel(QObject, ObservableProperties):
     def set_document_model(self, model):
         self._document_model = model
 
-    def set_url(self, url: str):
+    def set_url(self, url: str, model_name: str = "", api_key: str = ""):
         self._client.url = url
+        if model_name:
+            self._client.model_name = model_name
+        self._client.api_key = api_key
 
     def clear_conversation(self):
         self._client.clear_conversation()

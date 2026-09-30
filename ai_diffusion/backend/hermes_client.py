@@ -381,8 +381,10 @@ Current canvas context will be provided with each message.\
 
 
 class HermesClient:
-    def __init__(self, url: str = ""):
+    def __init__(self, url: str = "", model_name: str = "hermes", api_key: str = ""):
         self._url = url
+        self._model_name = model_name
+        self._api_key = api_key
         self._conversation: list[HermesMessage] = []
         self._system_prompt = HERMES_SYSTEM_PROMPT
 
@@ -393,6 +395,22 @@ class HermesClient:
     @url.setter
     def url(self, value: str):
         self._url = value
+
+    @property
+    def model_name(self):
+        return self._model_name
+
+    @model_name.setter
+    def model_name(self, value: str):
+        self._model_name = value
+
+    @property
+    def api_key(self):
+        return self._api_key
+
+    @api_key.setter
+    def api_key(self, value: str):
+        self._api_key = value
 
     @property
     def conversation(self):
@@ -447,7 +465,7 @@ class HermesClient:
 
         messages = self._build_messages()
         payload = {
-            "model": "hermes",
+            "model": self._model_name or "hermes",
             "messages": messages,
             "tools": MCP_TOOLS,
             "temperature": 0.7,
@@ -455,12 +473,25 @@ class HermesClient:
         }
 
         data = json.dumps(payload).encode("utf-8")
-        url = self._url.rstrip("/") + "/v1/chat/completions"
+        base = self._url.rstrip("/")
+        if base.endswith("/v1"):
+            url = f"{base}/chat/completions"
+        elif base.endswith("/chat/completions"):
+            url = base
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        if "openrouter.ai" in url:
+            headers["HTTP-Referer"] = "https://github.com/Acly/krita-ai-diffusion"
+            headers["X-Title"] = "Krita AI Diffusion Hermes Agent"
 
         req = urllib.request.Request(
             url,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
 

@@ -308,8 +308,10 @@ class HermesWidget(QWidget):
             ]
             self.style_select.update_styles()
             url = getattr(settings, "hermes_url", "")
+            model_name = getattr(settings, "hermes_model", "")
+            api_key = getattr(settings, "hermes_api_key", "")
             if url:
-                self._hermes.set_url(url)
+                self._hermes.set_url(url, model_name, api_key)
             self._update_url_hint()
 
     def _send_message(self):
@@ -320,8 +322,10 @@ class HermesWidget(QWidget):
 
     def _send_message_text(self, text: str):
         url = getattr(settings, "hermes_url", "")
+        model_name = getattr(settings, "hermes_model", "")
+        api_key = getattr(settings, "hermes_api_key", "")
         if url:
-            self._hermes.set_url(url)
+            self._hermes.set_url(url, model_name, api_key)
         if not self._hermes.client.url:
             self._hermes._add_assistant_message(
                 "⚠️ Hermes server URL is not configured. "

@@ -1155,13 +1155,17 @@ class HermesSettings(SettingsTab):
         S = Settings
         self.add("hermes_enabled", SwitchSetting(S._hermes_enabled, parent=self))
         self.add("hermes_url", TextSetting(S._hermes_url, parent=self))
+        self.add("hermes_model", TextSetting(S._hermes_model, parent=self))
+        self.add("hermes_api_key", TextSetting(S._hermes_api_key, parent=self))
 
         info_box = QLabel(
             _(
                 "Hermes is an AI painting assistant that uses MCP (Model Context Protocol) to "
                 "interact with Krita. It enhances prompts, organizes layers, manages inpainting regions, "
                 "and directs ComfyUI generation.<br><br>"
-                "Set the URL to an OpenAI-compatible Hermes agent server (e.g. <code>http://localhost:8080</code>)."
+                "You can use a cloud provider like <b>OpenRouter</b> (URL: <code>https://openrouter.ai/api/v1</code>, "
+                "Model: <code>nousresearch/hermes-3-llama-3.1-8b</code>) with an API key, "
+                "or a local server (e.g. <code>http://localhost:8080</code>)."
             )
         )
         info_box.setWordWrap(True)
