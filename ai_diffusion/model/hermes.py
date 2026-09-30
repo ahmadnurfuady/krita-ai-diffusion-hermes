@@ -530,14 +530,21 @@ class HermesModel(QObject, ObservableProperties):
                 layer_name = layer_spec.get('name') or f'Layer {i + 1}'
                 layer_type = layer_spec.get('layer_type', 'custom')
                 prompt_suffix = layer_spec.get('prompt_suffix', '')
-                strength = layer_spec.get('strength', 1.0)
+
+                if "strength" in layer_spec and layer_spec["strength"] is not None:
+                    strength = float(layer_spec["strength"])
+                elif i == 0:
+                    strength = 1.0
+                else:
+                    strength = self._DEFAULT_LAYER_STRENGTHS.get(layer_type, 0.60)
+
                 layer_seed = layer_spec.get('seed', base_seed)
 
                 full_prompt = self._build_layer_prompt(subject, layer_type, prompt_suffix)
                 layer_negative = self._build_layer_negative(layer_type, negative)
 
                 self.state = HermesState.generating
-                self.status_text = f"Generating layer {i + 1}/{len(layers_spec)}: {layer_name} ({layer_type})..."
+                self.status_text = f"Generating layer {i + 1}/{len(layers_spec)}: {layer_name} ({layer_type}, strength={strength:.2f})..."
 
                 model.regions.positive = full_prompt
                 model.regions.negative = layer_negative
@@ -566,36 +573,56 @@ class HermesModel(QObject, ObservableProperties):
 
     # ── Layer prompt helpers ───────────────────────────────────────────
 
+    _DEFAULT_LAYER_STRENGTHS: dict[str, float] = {
+        "line_art": 1.0,
+        "base_color": 0.70,     # references line art, applies flat colors
+        "shadow": 0.52,         # references base color, adds shading
+        "highlight": 0.38,      # references shadow/base, adds highlights
+        "finishing": 0.35,      # references previous pass, adds final polish
+        "object": 0.60,         # references scene to add object
+        "background": 1.0,      # fresh background
+        "custom": 0.60,
+    }
+
     _LAYER_TYPE_PROMPTS: dict[str, str] = {
-        "base_color": (
-            "flat color illustration, anime coloring, clean cel shading, no shadows, no highlights, "
-            "solid colors, clean edges, character design sheet"
-        ),
         "line_art": (
             "clean black ink line art, white background, crisp outlines, no color, no shading, "
             "professional manga linework, monochrome, high contrast"
         ),
+        "base_color": (
+            "flat color illustration, clean anime coloring, vibrant solid colors, smooth fills, "
+            "clear boundaries, following the line art, no shadows, no highlights"
+        ),
         "shadow": (
-            "dark shadow shading, ambient occlusion, soft shadow pass, no highlights, "
-            "grayscale shadow overlay, depth shading, form shadow"
+            "detailed shadow pass, anime cel shading, deep shadows, ambient occlusion, "
+            "form shadows, depth shading, volumetric lighting contrast"
         ),
         "highlight": (
-            "bright white specular highlights, rim lighting, glossy shine, "
-            "light reflection, luminous highlights, high key lighting pass"
+            "bright specular highlights, rim lighting, glowing accents, luminous reflection, "
+            "polished highlights, vibrant lighting effects"
+        ),
+        "finishing": (
+            "masterpiece finishing touch, highly polished artwork, atmospheric lighting glow, "
+            "rim light, rich depth, sharp focus, final color grading, complete illustration"
         ),
         "background": (
-            "detailed background environment, no characters, scene backdrop, "
+            "detailed background scenery, environment backdrop, no characters, no person, "
             "atmospheric perspective, landscape or interior setting"
+        ),
+        "object": (
+            "detailed foreground object, props, accessories, clear focus, high fidelity"
         ),
         "custom": "",
     }
 
     _LAYER_TYPE_NEGATIVES: dict[str, str] = {
-        "line_art": "color, gradient, shading, fill, blur, watermark",
-        "base_color": "shading, shadows, highlights, gradients, blur",
-        "shadow": "color, highlights, bright areas",
-        "highlight": "dark areas, shadows, flat color",
-        "background": "person, character, human, face",
+        "line_art": "color, gradient, shading, fill, background noise, blur, watermark",
+        "base_color": "shading, deep shadows, complex lighting, noisy gradients, blur",
+        "shadow": "flat lighting, unshaded, overexposed, washed out, blur",
+        "highlight": "dark, dull, muddy, flat lighting, shadows only",
+        "finishing": "unfinished, sketch, draft, low quality, artifacts, blur",
+        "background": "person, character, human, face, girl, boy",
+        "object": "blurry, distorted, low quality",
         "custom": "",
     }
 
@@ -664,7 +691,7 @@ class HermesModel(QObject, ObservableProperties):
         return ctx
 
     async def _wait_for_generation(
-        self, model, previous_job_ids: set[str] | None = None, timeout: float = 300.0
+        self, model, previous_job_ids: set[str] | None = None, timeout: float = 900.0
     ) -> Job | None:
         elapsed = 0.0
         interval = 0.5

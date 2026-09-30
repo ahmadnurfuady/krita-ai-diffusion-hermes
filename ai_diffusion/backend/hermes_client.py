@@ -342,14 +342,25 @@ MCP_TOOLS = [
                                 },
                                 "layer_type": {
                                     "type": "string",
-                                    "enum": ["base_color", "line_art", "shadow", "highlight", "background", "custom"],
+                                    "enum": [
+                                        "line_art",
+                                        "base_color",
+                                        "shadow",
+                                        "highlight",
+                                        "finishing",
+                                        "background",
+                                        "object",
+                                        "custom",
+                                    ],
                                     "description": (
-                                        "Type of layer. Controls how the prompt is constructed:\n"
-                                        "- base_color: flat color illustration, no shading\n"
-                                        "- line_art: clean black line drawing on white background\n"
-                                        "- shadow: dark shading pass overlay\n"
-                                        "- highlight: bright specular highlight pass\n"
-                                        "- background: scene background without subject\n"
+                                        "Type of layer. Controls prompt steering and reference progression:\n"
+                                        "- line_art: clean black ink line drawing on white background (strength=1.0)\n"
+                                        "- base_color: flat anime coloring referencing lineart (default strength=0.70)\n"
+                                        "- shadow: form shading and ambient occlusion referencing base color (default strength=0.52)\n"
+                                        "- highlight: specular highlights and rim lighting (default strength=0.38)\n"
+                                        "- finishing: final polished illustration referencing previous pass (default strength=0.35)\n"
+                                        "- background: scenery backdrop without main subject (strength=1.0)\n"
+                                        "- object: foreground objects, props, accessories (default strength=0.60)\n"
                                         "- custom: use prompt_suffix as-is"
                                     ),
                                 },
@@ -357,7 +368,10 @@ MCP_TOOLS = [
                                     "type": "string",
                                     "description": "Extra prompt detail appended for this layer. For layer_type=custom, this is the full per-layer prompt.",
                                 },
-                                "strength": {"type": "number", "default": 1.0},
+                                "strength": {
+                                    "type": "number",
+                                    "description": "Denoising strength (1.0 for new txt2img, 0.35-0.75 for referencing previous canvas layer). Leave omitted to use optimal default.",
+                                },
                                 "seed": {"type": "integer", "default": -1},
                             },
                             "required": ["name", "layer_type"],
@@ -389,20 +403,28 @@ Core Rules & Guidelines:
    - For Anime/Illustrious: Use quality tags, booru tags, and anime stylization descriptors.
 
 2. **How Diffusion Models & Layers Work**:
-   - ComfyUI diffusion models generate complete full-canvas raster images. They produce OPAQUE images, NOT transparent passes.
-   - For layered artwork (line art, base color, shadow, highlight), use `generate_layered` with the appropriate `layer_type` per layer.
+   - ComfyUI diffusion models generate raster images. In layered generation, subsequent layers reference the visible canvas through img2img refinement when strength < 1.0.
+   - For layered artwork, use `generate_layered` with the appropriate `layer_type` and progression.
    - The `generate_layered` tool runs multiple generation passes in sequence, each creating a named Krita layer.
    - Use `generate_to_layer` for a single pass targeting a specific layer.
    - Use `inpaint_selection` or `inpaint_region` to edit specific areas of an existing layer.
 
-3. **Layered Artwork Workflow** (for requests like "create with layers"):
-   When the user asks to create artwork with separate layers, use `generate_layered` with these layer_types:
-   - `base_color`: Flat-colored illustration of the full subject, no shading, clean anime/illustration style.
-   - `line_art`: Clean black ink lineart on white background, no color, sharp lines only.
-   - `shadow`: Dark shading/shadow pass showing depth and form on the subject.
-   - `highlight`: Bright white specular highlights and rim lighting pass.
-   - `background`: Background scene without the main subject.
-   Example for a character: layers=[background, base_color, line_art, shadow, highlight]
+3. **Layered Artwork Workflows** (CRITICAL - choose based on user request):
+
+   **Workflow A: Anime Style Sequential Layering** (Line Art -> Base Color -> Shadow -> Finishing):
+   When the user asks for anime artwork with separate layers (line art, base color, shadow/shading, finishing/highlight):
+   - Layer 1: name="1. Line Art", layer_type="line_art", strength=1.0 (creates clean linework)
+   - Layer 2: name="2. Base Color", layer_type="base_color", strength=0.70 (colors in the lineart)
+   - Layer 3: name="3. Shadow", layer_type="shadow", strength=0.52 (adds cel shading and form shadows)
+   - Layer 4: name="4. Finishing", layer_type="finishing", strength=0.38 (adds final polish, rim light, highlights)
+   Each layer references the previous canvas output, producing a coherent artistic progression!
+
+   **Workflow B: Semi-Realistic / Realistic Object Layering** (Background -> Subject -> Props -> Lighting):
+   When the user asks for semi-realistic or realistic scenes with separated layers:
+   - Layer 1: name="Background", layer_type="background", strength=1.0
+   - Layer 2: name="Subject", layer_type="base_color", strength=0.75
+   - Layer 3: name="Foreground Objects", layer_type="object", strength=0.60
+   - Layer 4: name="Atmospheric Lighting", layer_type="highlight", strength=0.40
 
 4. **Context-Aware Editing**:
    - Understand the canvas state - active layer, selection bounds, and existing layers.

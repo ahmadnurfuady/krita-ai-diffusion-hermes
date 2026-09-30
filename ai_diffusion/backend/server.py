@@ -459,6 +459,10 @@ class Server:
                 args += ["--port", str(port)]
             if self.backend is not ServerBackend.cpu:
                 env["ONEDNN_MAX_CPU_ISA"] = "AVX2"  # workaround for #401
+                if "--cuda-device" in args:
+                    idx = args.index("--cuda-device")
+                    if idx + 1 < len(args):
+                        env["CUDA_VISIBLE_DEVICES"] = args[idx + 1]
 
             log.info(f"Starting server with python {' '.join(args)}")
             self._process = await create_process(
