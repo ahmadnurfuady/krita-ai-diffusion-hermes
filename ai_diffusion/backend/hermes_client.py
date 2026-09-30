@@ -318,33 +318,59 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_layered",
-            "description": "Generate multiple separate conceptual layers sequentially (e.g. background layer, then foreground subject layer). Each pass creates an actual Krita layer. Note that full-canvas generation produces opaque layers; use inpaint_selection for localized additions.",
+            "description": (
+                "Generate multiple artwork layers sequentially — each layer gets its own ComfyUI generation pass "
+                "and is placed into a separate named Krita layer. Use this for creating structured artwork with "
+                "separations like Line Art, Base Color, Shadow, and Highlight. Each pass produces an opaque image; "
+                "the model will automatically use layer-type-appropriate prompts and blend modes where possible."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "subject_prompt": {
+                    "prompt": {
                         "type": "string",
-                        "description": "Overall description of the subject/scene.",
+                        "description": "Overall subject description that applies to all layers (e.g. 'male character playing guitar, white shirt, semi-white hair').",
                     },
                     "layers": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "name": {"type": "string"},
+                                "name": {
+                                    "type": "string",
+                                    "description": "Display name for this Krita layer.",
+                                },
+                                "layer_type": {
+                                    "type": "string",
+                                    "enum": ["base_color", "line_art", "shadow", "highlight", "background", "custom"],
+                                    "description": (
+                                        "Type of layer. Controls how the prompt is constructed:\n"
+                                        "- base_color: flat color illustration, no shading\n"
+                                        "- line_art: clean black line drawing on white background\n"
+                                        "- shadow: dark shading pass overlay\n"
+                                        "- highlight: bright specular highlight pass\n"
+                                        "- background: scene background without subject\n"
+                                        "- custom: use prompt_suffix as-is"
+                                    ),
+                                },
                                 "prompt_suffix": {
                                     "type": "string",
-                                    "description": "Additional prompt appended for this layer's generation pass.",
+                                    "description": "Extra prompt detail appended for this layer. For layer_type=custom, this is the full per-layer prompt.",
                                 },
                                 "strength": {"type": "number", "default": 1.0},
+                                "seed": {"type": "integer", "default": -1},
                             },
+                            "required": ["name", "layer_type"],
                         },
-                        "description": "Layer definitions. Each gets its own generation pass.",
+                        "description": "Ordered list of layers to generate, from bottom to top of the layer stack.",
                     },
-                    "negative_prompt": {"type": "string"},
-                    "seed": {"type": "integer", "default": -1},
+                    "negative_prompt": {
+                        "type": "string",
+                        "description": "What to avoid in all layers.",
+                    },
+                    "seed": {"type": "integer", "default": -1, "description": "Base seed, per-layer seeds override this."},
                 },
-                "required": ["subject_prompt", "layers"],
+                "required": ["prompt", "layers"],
             },
         },
     },
@@ -363,19 +389,26 @@ Core Rules & Guidelines:
    - For Anime/Illustrious: Use quality tags, booru tags, and anime stylization descriptors.
 
 2. **How Diffusion Models & Layers Work**:
-   - ComfyUI diffusion models (Flux, SDXL, SD 1.5) generate complete full-canvas raster images. They DO NOT output transparent isolated lineart or transparent shading passes across the full canvas.
-   - To build a layered artwork:
-     - Generate the primary image/subject layer with `generate_to_layer(layer_name="Main Artwork", prompt=...)`.
-     - Or generate a separate background layer with `generate_to_layer(layer_name="Background", prompt=...)`.
-     - To modify or add elements to an existing image, use `inpaint_selection` or `inpaint_region` on specific areas.
-     - You can organize layers with `create_layer`, `create_layer_group`, and `select_layer`.
-     - DO NOT loop trying to create separate transparent lineart/base color/shading passes on full canvas, as each generation pass produces a complete opaque image.
+   - ComfyUI diffusion models generate complete full-canvas raster images. They produce OPAQUE images, NOT transparent passes.
+   - For layered artwork (line art, base color, shadow, highlight), use `generate_layered` with the appropriate `layer_type` per layer.
+   - The `generate_layered` tool runs multiple generation passes in sequence, each creating a named Krita layer.
+   - Use `generate_to_layer` for a single pass targeting a specific layer.
+   - Use `inpaint_selection` or `inpaint_region` to edit specific areas of an existing layer.
 
-3. **Context-Aware Editing**:
+3. **Layered Artwork Workflow** (for requests like "create with layers"):
+   When the user asks to create artwork with separate layers, use `generate_layered` with these layer_types:
+   - `base_color`: Flat-colored illustration of the full subject, no shading, clean anime/illustration style.
+   - `line_art`: Clean black ink lineart on white background, no color, sharp lines only.
+   - `shadow`: Dark shading/shadow pass showing depth and form on the subject.
+   - `highlight`: Bright white specular highlights and rim lighting pass.
+   - `background`: Background scene without the main subject.
+   Example for a character: layers=[background, base_color, line_art, shadow, highlight]
+
+4. **Context-Aware Editing**:
    - Understand the canvas state - active layer, selection bounds, and existing layers.
    - If the user has made a selection on canvas, use `inpaint_selection` to edit only within that selection.
 
-4. **Task Completion**:
+5. **Task Completion**:
    - After executing the required tool(s) to fulfill the user's request, provide a helpful, concise summary of what was created/modified and STOP calling tools. Do not loop unnecessarily.
 
 Current canvas context will be provided with each message.\

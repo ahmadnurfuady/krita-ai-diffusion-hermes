@@ -182,13 +182,32 @@ class HermesModel(QObject, ObservableProperties):
 
     # ── Tool implementations ──────────────────────────────────────────
 
-    def _apply_job_to_layer(self, model, job: Job | None, layer_name: str | None = None):
+    def _apply_job_to_layer(
+        self,
+        model,
+        job: Job | None,
+        layer_name: str | None = None,
+        layer_type: str = "custom",
+    ):
         if not job or not job.id:
             return
         try:
             model.apply_generated_result(job.id, 0)
-            if layer_name and model.layers.active:
-                model.layers.active.name = f"[Hermes] {layer_name}"
+            if model.layers.active:
+                if layer_name:
+                    model.layers.active.name = f"[Hermes] {layer_name}"
+                node = getattr(model.layers.active, "_node", None)
+                if node:
+                    if layer_type in ("line_art", "shadow"):
+                        try:
+                            node.setBlendingMode("multiply")
+                        except Exception:
+                            pass
+                    elif layer_type == "highlight":
+                        try:
+                            node.setBlendingMode("screen")
+                        except Exception:
+                            pass
         except Exception as e:
             log.warning(f"Failed to apply generated result to layer: {e}")
 
@@ -488,45 +507,111 @@ class HermesModel(QObject, ObservableProperties):
         if model is None:
             return "Error: No document model available"
 
-        subject = args["subject_prompt"]
-        layers_spec = args["layers"]
-        negative = args.get("negative_prompt", "")
-        seed = args.get("seed", -1)
+        log.debug(f"[Hermes] _tool_generate_layered args keys: {list(args.keys())}")
+
+        subject = args.get('subject_prompt') or args.get('prompt') or args.get('description', '')
+        if not subject:
+            return "Error: missing prompt - provide subject_prompt or prompt"
+
+        layers_spec = args.get('layers') or args.get('layer_list') or []
+        negative = args.get('negative_prompt', '')
+        base_seed = args.get('seed', -1)
+        if base_seed < 0:
+            import random
+            base_seed = random.randint(0, 2**31 - 1)
 
         results = []
         try:
             for i, layer_spec in enumerate(layers_spec):
-                layer_name = layer_spec["name"]
-                prompt_suffix = layer_spec.get("prompt_suffix", "")
-                strength = layer_spec.get("strength", 1.0)
+                if not isinstance(layer_spec, dict):
+                    log.warning(f"[Hermes] Skipping non-dict layer spec: {layer_spec}")
+                    continue
 
-                full_prompt = f"{subject}, {prompt_suffix}" if prompt_suffix else subject
+                layer_name = layer_spec.get('name') or f'Layer {i + 1}'
+                layer_type = layer_spec.get('layer_type', 'custom')
+                prompt_suffix = layer_spec.get('prompt_suffix', '')
+                strength = layer_spec.get('strength', 1.0)
+                layer_seed = layer_spec.get('seed', base_seed)
+
+                full_prompt = self._build_layer_prompt(subject, layer_type, prompt_suffix)
+                layer_negative = self._build_layer_negative(layer_type, negative)
 
                 self.state = HermesState.generating
-                self.status_text = f"Generating layer {i + 1}/{len(layers_spec)}: {layer_name}..."
+                self.status_text = f"Generating layer {i + 1}/{len(layers_spec)}: {layer_name} ({layer_type})..."
 
                 model.regions.positive = full_prompt
-                if negative:
-                    model.regions.negative = negative
+                model.regions.negative = layer_negative
                 model.strength = strength
-                if seed >= 0:
-                    model.seed = seed
+                if layer_seed >= 0:
+                    model.seed = layer_seed
                     model.fixed_seed = True
+                else:
+                    model.fixed_seed = False
 
                 prev_ids = {j.id for j in model.jobs if j.id}
                 model.generate()
                 job = await self._wait_for_generation(model, prev_ids)
 
                 if job:
-                    self._apply_job_to_layer(model, job, layer_name)
-                    results.append(layer_name)
+                    self._apply_job_to_layer(model, job, layer_name, layer_type)
+                    results.append(f'{layer_name} ({layer_type})')
 
             return f"Generated {len(results)} layers: {', '.join(results)}"
         except Exception as e:
+            log.exception("[Hermes] _tool_generate_layered exception")
             return f"Layered generation failed at layer {len(results) + 1}: {e}"
         finally:
             model.fixed_seed = False
             self.state = HermesState.executing_tools
+
+    # ── Layer prompt helpers ───────────────────────────────────────────
+
+    _LAYER_TYPE_PROMPTS: dict[str, str] = {
+        "base_color": (
+            "flat color illustration, anime coloring, clean cel shading, no shadows, no highlights, "
+            "solid colors, clean edges, character design sheet"
+        ),
+        "line_art": (
+            "clean black ink line art, white background, crisp outlines, no color, no shading, "
+            "professional manga linework, monochrome, high contrast"
+        ),
+        "shadow": (
+            "dark shadow shading, ambient occlusion, soft shadow pass, no highlights, "
+            "grayscale shadow overlay, depth shading, form shadow"
+        ),
+        "highlight": (
+            "bright white specular highlights, rim lighting, glossy shine, "
+            "light reflection, luminous highlights, high key lighting pass"
+        ),
+        "background": (
+            "detailed background environment, no characters, scene backdrop, "
+            "atmospheric perspective, landscape or interior setting"
+        ),
+        "custom": "",
+    }
+
+    _LAYER_TYPE_NEGATIVES: dict[str, str] = {
+        "line_art": "color, gradient, shading, fill, blur, watermark",
+        "base_color": "shading, shadows, highlights, gradients, blur",
+        "shadow": "color, highlights, bright areas",
+        "highlight": "dark areas, shadows, flat color",
+        "background": "person, character, human, face",
+        "custom": "",
+    }
+
+    def _build_layer_prompt(self, subject: str, layer_type: str, prompt_suffix: str) -> str:
+        type_prompt = self._LAYER_TYPE_PROMPTS.get(layer_type, "")
+        parts = [subject]
+        if type_prompt:
+            parts.append(type_prompt)
+        if prompt_suffix:
+            parts.append(prompt_suffix)
+        return ", ".join(parts)
+
+    def _build_layer_negative(self, layer_type: str, base_negative: str) -> str:
+        type_neg = self._LAYER_TYPE_NEGATIVES.get(layer_type, "")
+        parts = [p for p in [base_negative, type_neg] if p]
+        return ", ".join(parts)
 
     # ── Helpers ───────────────────────────────────────────────────────
 
