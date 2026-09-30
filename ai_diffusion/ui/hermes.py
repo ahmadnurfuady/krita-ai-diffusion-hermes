@@ -291,6 +291,15 @@ class HermesWidget(QWidget):
     def _update_url_hint(self):
         url = getattr(settings, "hermes_url", "")
         self._url_banner.setVisible(not bool(url))
+        if self._hermes.state == HermesState.idle:
+            if url:
+                self._status_label.setStyleSheet(f"color: {theme.green}; font-size: 11px;")
+                self._status_label.setText("● " + _("Ready"))
+            else:
+                self._status_label.setStyleSheet(
+                    f"color: {'#888' if theme.is_dark else '#999'}; font-size: 11px;"
+                )
+                self._status_label.setText("○ " + _("Offline"))
 
     @property
     def model(self):
@@ -357,11 +366,17 @@ class HermesWidget(QWidget):
 
         if state == HermesState.error:
             self._status_label.setStyleSheet(f"color: {'#ff6666' if theme.is_dark else 'red'};")
+            self._status_label.setText("● " + _("Error"))
         elif busy:
             self._status_label.setStyleSheet(f"color: {'#66aaff' if theme.is_dark else '#3b82f6'};")
         else:
-            self._status_label.setStyleSheet(f"color: {theme.green};")
-            self._status_label.setText("")
+            url = getattr(settings, "hermes_url", "")
+            if url:
+                self._status_label.setStyleSheet(f"color: {theme.green};")
+                self._status_label.setText("● " + _("Ready"))
+            else:
+                self._status_label.setStyleSheet(f"color: {'#888' if theme.is_dark else '#999'};")
+                self._status_label.setText("○ " + _("Offline"))
 
     def _on_status_changed(self, text: str):
         self._status_label.setText(text)

@@ -568,3 +568,87 @@ class HermesClient:
                 layer_info.append(f"  {vis} {l.get('name', '?')} ({l.get('type', '?')})")
             parts.append("[Layers (bottom→top):\n" + "\n".join(layer_info) + "\n]")
         return " ".join(parts[:4]) + ("\n" + parts[4] if len(parts) > 4 else "")
+
+    async def check_connection(self) -> tuple[bool, str]:
+        """Test if the server is reachable and credentials are valid."""
+        import ssl
+        import time
+        import urllib.request
+
+        if not self._url:
+            return False, "URL is not set"
+
+        base = self._url.rstrip("/")
+        if base.endswith("/v1"):
+            url = f"{base}/models"
+        elif base.endswith("/chat/completions"):
+            url = base.replace("/chat/completions", "/models")
+        else:
+            url = f"{base}/v1/models"
+
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        if "openrouter.ai" in url:
+            headers["HTTP-Referer"] = "https://github.com/Acly/krita-ai-diffusion"
+            headers["X-Title"] = "Krita AI Diffusion Hermes Agent"
+
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        loop = asyncio.get_event_loop()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        def do_ping():
+            t0 = time.time()
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as _resp:
+                elapsed = int((time.time() - t0) * 1000)
+                return True, f"Connected! ({elapsed}ms)"
+
+        try:
+            return await loop.run_in_executor(None, do_ping)
+        except Exception:
+            return await self._check_connection_chat()
+
+    async def _check_connection_chat(self) -> tuple[bool, str]:
+        import ssl
+        import time
+        import urllib.request
+
+        base = self._url.rstrip("/")
+        if base.endswith("/v1"):
+            url = f"{base}/chat/completions"
+        elif base.endswith("/chat/completions"):
+            url = base
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        if "openrouter.ai" in url:
+            headers["HTTP-Referer"] = "https://github.com/Acly/krita-ai-diffusion"
+            headers["X-Title"] = "Krita AI Diffusion Hermes Agent"
+
+        payload = {
+            "model": self._model_name or "hermes",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        loop = asyncio.get_event_loop()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        def do_post():
+            t0 = time.time()
+            with urllib.request.urlopen(req, timeout=15, context=ctx) as _resp:
+                elapsed = int((time.time() - t0) * 1000)
+                return True, f"Connected! ({elapsed}ms)"
+
+        try:
+            return await loop.run_in_executor(None, do_post)
+        except Exception as e:
+            return False, f"Failed: {e}"

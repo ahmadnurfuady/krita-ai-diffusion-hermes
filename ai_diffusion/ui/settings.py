@@ -38,6 +38,7 @@ from .. import __version__, eventloop, util
 from ..backend import resources
 from ..backend.client import Client, MissingResources, User
 from ..backend.cloud_client import CloudClient
+from ..backend.hermes_client import HermesClient
 from ..backend.resources import Arch, ResourceId
 from ..backend.server import Server, ServerState
 from ..localization import Localization
@@ -1158,6 +1159,17 @@ class HermesSettings(SettingsTab):
         self.add("hermes_model", TextSetting(S._hermes_model, parent=self))
         self.add("hermes_api_key", TextSetting(S._hermes_api_key, parent=self))
 
+        # Test connection button
+        test_layout = QHBoxLayout()
+        self._test_button = QPushButton(_("Test Connection"), self)
+        self._test_button.setFixedWidth(140)
+        self._test_button.clicked.connect(self._test_connection)
+        test_layout.addWidget(self._test_button)
+
+        self._test_status = QLabel("", self)
+        test_layout.addWidget(self._test_status, 1)
+        self._layout.addLayout(test_layout)
+
         info_box = QLabel(
             _(
                 "Hermes is an AI painting assistant that uses MCP (Model Context Protocol) to "
@@ -1173,6 +1185,33 @@ class HermesSettings(SettingsTab):
         self._layout.addWidget(info_box)
 
         self._layout.addStretch()
+
+    def _test_connection(self):
+        url = self.values.get("hermes_url", "").strip()
+        model_name = self.values.get("hermes_model", "").strip()
+        api_key = self.values.get("hermes_api_key", "").strip()
+        if not url:
+            self._test_status.setText("❌ " + _("Please enter a URL first."))
+            self._test_status.setStyleSheet(f"color: {red};")
+            return
+
+        self._test_button.setEnabled(False)
+        self._test_status.setText("⏳ " + _("Connecting..."))
+        self._test_status.setStyleSheet(f"color: {yellow};")
+
+        client = HermesClient(url, model_name, api_key)
+
+        async def do_check():
+            ok, msg = await client.check_connection()
+            if ok:
+                self._test_status.setText(f"✅ {msg}")
+                self._test_status.setStyleSheet(f"color: {green};")
+            else:
+                self._test_status.setText(f"❌ {msg}")
+                self._test_status.setStyleSheet(f"color: {red};")
+            self._test_button.setEnabled(True)
+
+        eventloop.run(do_check())
 
 
 class SettingsDialog(QDialog):
