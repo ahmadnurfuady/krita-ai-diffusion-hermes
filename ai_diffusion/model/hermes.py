@@ -192,6 +192,32 @@ class HermesModel(QObject, ObservableProperties):
         except Exception as e:
             log.warning(f"Failed to apply generated result to layer: {e}")
 
+    def _place_image_to_new_layer(
+        self, model, job: Job | None, layer_name: str, parent=None
+    ):
+        """Place the job's generated image directly into a new named layer.
+
+        Unlike _apply_job_to_layer this bypasses apply_generated_result so it
+        avoids side effects such as preview-layer cleanup, auto-apply conflicts
+        and active-layer shifts that interfere with multi-layer generation.
+        """
+        if not job or not job.results:
+            return None
+        try:
+            image = job.results[0]
+            bounds = Bounds(*job.params.bounds.offset, *image.extent)
+            layer = model.layers.create(
+                f"[Hermes] {layer_name}",
+                image,
+                bounds,
+                make_active=False,
+                parent=parent,
+            )
+            return layer
+        except Exception as e:
+            log.warning(f"Failed to place image to layer '{layer_name}': {e}")
+            return None
+
     async def _tool_generate_image(self, args: dict) -> str:
         model = self._document_model
         if model is None:
@@ -493,8 +519,12 @@ class HermesModel(QObject, ObservableProperties):
         negative = args.get("negative_prompt", "")
         seed = args.get("seed", -1)
 
-        results = []
+        results: list[str] = []
+        generated_layers = []
         try:
+            # Create a group layer to hold all generated layers
+            group = model.layers.create_group(f"[Hermes] {subject[:60]}")
+
             for i, layer_spec in enumerate(layers_spec):
                 layer_name = layer_spec["name"]
                 prompt_suffix = layer_spec.get("prompt_suffix", "")
@@ -503,7 +533,9 @@ class HermesModel(QObject, ObservableProperties):
                 full_prompt = f"{subject}, {prompt_suffix}" if prompt_suffix else subject
 
                 self.state = HermesState.generating
-                self.status_text = f"Generating layer {i + 1}/{len(layers_spec)}: {layer_name}..."
+                self.status_text = (
+                    f"Generating layer {i + 1}/{len(layers_spec)}: {layer_name}..."
+                )
 
                 model.regions.positive = full_prompt
                 if negative:
@@ -513,16 +545,69 @@ class HermesModel(QObject, ObservableProperties):
                     model.seed = seed
                     model.fixed_seed = True
 
+                # Track existing layers before generation so we can clean up
+                # any auto-applied layers created by _finish_job
+                layers_before = {l.id for l in model.layers.all}
+
                 prev_ids = {j.id for j in model.jobs if j.id}
                 model.generate()
                 job = await self._wait_for_generation(model, prev_ids)
 
                 if job:
-                    self._apply_job_to_layer(model, job, layer_name)
-                    results.append(layer_name)
+                    # Place the image directly into the group, avoiding
+                    # apply_generated_result which has side effects
+                    layer = self._place_image_to_new_layer(
+                        model, job, layer_name, parent=group
+                    )
 
-            return f"Generated {len(results)} layers: {', '.join(results)}"
+                    # Remove any auto-applied layer that _finish_job created
+                    # (when generation_finished_action is set to "apply")
+                    for l in model.layers.all:
+                        if l.id not in layers_before and l is not layer and l != group:
+                            try:
+                                if l.name.startswith("[Generated]") or l.name.startswith(
+                                    "[Preview]"
+                                ):
+                                    l.remove()
+                            except Exception:
+                                pass
+
+                    # Also clean up internal preview layer
+                    if model._layer:
+                        try:
+                            model._layer.remove()
+                        except Exception:
+                            pass
+                        model._layer = None
+
+                    if layer:
+                        # Hide this layer so the next generation doesn't see it
+                        # as part of the canvas content
+                        if i < len(layers_spec) - 1:
+                            layer.is_visible = False
+                        generated_layers.append(layer)
+                        results.append(layer_name)
+
+            # Make all generated layers visible again
+            for layer in generated_layers:
+                try:
+                    layer.is_visible = True
+                except Exception:
+                    pass
+
+            if results:
+                return (
+                    f"Generated {len(results)} layers in group "
+                    f"'{subject[:40]}': {', '.join(results)}"
+                )
+            return "No layers were generated"
         except Exception as e:
+            # Restore visibility of any hidden layers on failure
+            for layer in generated_layers:
+                try:
+                    layer.is_visible = True
+                except Exception:
+                    pass
             return f"Layered generation failed at layer {len(results) + 1}: {e}"
         finally:
             model.fixed_seed = False

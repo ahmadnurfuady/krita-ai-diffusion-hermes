@@ -318,7 +318,7 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_layered",
-            "description": "Generate multiple separate conceptual layers sequentially (e.g. background layer, then foreground subject layer). Each pass creates an actual Krita layer. Note that full-canvas generation produces opaque layers; use inpaint_selection for localized additions.",
+            "description": "Generate multiple images as separate layers in a group. Each layer gets its own independent generation pass with a shared subject prompt plus a per-layer prompt suffix. Creates a group layer containing all generated layers. Use this when the user wants multiple layer variations (e.g. different backgrounds, lighting moods, or compositions).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -365,11 +365,15 @@ Core Rules & Guidelines:
 2. **How Diffusion Models & Layers Work**:
    - ComfyUI diffusion models (Flux, SDXL, SD 1.5) generate complete full-canvas raster images. They DO NOT output transparent isolated lineart or transparent shading passes across the full canvas.
    - To build a layered artwork:
-     - Generate the primary image/subject layer with `generate_to_layer(layer_name="Main Artwork", prompt=...)`.
-     - Or generate a separate background layer with `generate_to_layer(layer_name="Background", prompt=...)`.
+     - For a **single layer**: use `generate_to_layer(layer_name=..., prompt=...)`.
+     - For **multiple separate layers** (e.g. background + foreground variations): use `generate_layered(subject_prompt=..., layers=[...])`. This creates a group layer containing separate child layers, each from an independent generation pass with different prompt suffixes. Each layer is a complete opaque image.
      - To modify or add elements to an existing image, use `inpaint_selection` or `inpaint_region` on specific areas.
      - You can organize layers with `create_layer`, `create_layer_group`, and `select_layer`.
      - DO NOT loop trying to create separate transparent lineart/base color/shading passes on full canvas, as each generation pass produces a complete opaque image.
+   - Effective multi-layer strategies with `generate_layered`:
+     - Different mood/lighting variations of the same scene
+     - Background layer + alternative foreground compositions
+     - Multiple artistic style interpretations of the same subject
 
 3. **Context-Aware Editing**:
    - Understand the canvas state - active layer, selection bounds, and existing layers.
