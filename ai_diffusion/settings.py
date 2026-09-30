@@ -486,6 +486,22 @@ class Settings(QObject):
         ),
     }
 
+    hermes_url: str
+    _hermes_url = Setting(
+        _("Hermes Agent URL"),
+        "",
+        _(
+            "URL of the Hermes AI agent server for agentic painting assistance (e.g. http://localhost:8080)"
+        ),
+    )
+
+    hermes_enabled: bool
+    _hermes_enabled = Setting(
+        _("Enable Hermes Agent"),
+        True,
+        _("Enable the Hermes agentic workspace for AI-assisted painting"),
+    )
+
     debug_dump_workflow: bool
     _debug_dump_workflow = Setting(
         _("Dump Workflow"),

@@ -56,6 +56,7 @@ from .settings_widgets import (
     SliderSetting,
     SpinBoxSetting,
     SwitchSetting,
+    TextSetting,
 )
 from .style import StylePresets
 from .theme import add_header, green, grey, logo, prompt_max_line_count, red, yellow
@@ -1147,6 +1148,29 @@ _contact_text = """
 """
 
 
+class HermesSettings(SettingsTab):
+    def __init__(self):
+        super().__init__(_("Hermes Agent"))
+
+        S = Settings
+        self.add("hermes_enabled", SwitchSetting(S._hermes_enabled, parent=self))
+        self.add("hermes_url", TextSetting(S._hermes_url, parent=self))
+
+        info_box = QLabel(
+            _(
+                "Hermes is an AI painting assistant that uses MCP (Model Context Protocol) to "
+                "interact with Krita. It enhances prompts, organizes layers, manages inpainting regions, "
+                "and directs ComfyUI generation.<br><br>"
+                "Set the URL to an OpenAI-compatible Hermes agent server (e.g. <code>http://localhost:8080</code>)."
+            )
+        )
+        info_box.setWordWrap(True)
+        info_box.setStyleSheet(f"color: {grey}; margin-top: 10px; margin-bottom: 6px;")
+        self._layout.addWidget(info_box)
+
+        self._layout.addStretch()
+
+
 class SettingsDialog(QDialog):
     _instance = None
 
@@ -1172,6 +1196,7 @@ class SettingsDialog(QDialog):
         self.connection = ConnectionSettings(server)
         self.styles = StylePresets(server)
         self.diffusion = DiffusionSettings()
+        self.hermes = HermesSettings()
         self.interface = InterfaceSettings()
         self.performance = PerformanceSettings()
         self.about = AboutSettings()
@@ -1188,6 +1213,7 @@ class SettingsDialog(QDialog):
         create_list_item(_("Connection"), self.connection)
         create_list_item(_("Styles"), self.styles)
         create_list_item(_("Diffusion"), self.diffusion)
+        create_list_item(_("Hermes Agent"), self.hermes)
         create_list_item(_("Interface"), self.interface)
         create_list_item(_("Performance"), self.performance)
         create_list_item(_("Plugin"), self.about)
@@ -1232,6 +1258,7 @@ class SettingsDialog(QDialog):
         self.connection.read()
         self.styles.read()
         self.diffusion.read()
+        self.hermes.read()
         self.interface.read()
         self.performance.read()
         self.about.read()

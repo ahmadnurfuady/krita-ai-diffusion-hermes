@@ -22,43 +22,17 @@ class AIToolsExtension(Extension):
 
         log.info(f"Extension initialized, Version: {__version__}, Python: {sys.version}")
 
-        # Hermes Inbound Listener
-        import threading
-        import json
-        from http.server import HTTPServer, BaseHTTPRequestHandler
-        from .backend.api import ConditioningInput, RegionInput
-        from .backend import api as api_module
-        from .image import Bounds, DummyImage
-
-        class HermesHandler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                content_length = int(self.headers.get('Content-Length', 0))
-                post_data = self.rfile.read(content_length)
-                try:
-                    payload = json.loads(post_data.decode('utf-8'))
-                    api_module.HERMES_LATEST_PAYLOAD = payload
-                    regions_data = payload.get("regions", [])
-                    log.info(f"Hermes Payload Received: {len(regions_data)} regions")
-                    
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b'{"status":"OK"}')
-                except Exception as e:
-                    log.error(f"Error parsing Hermes payload: {e}")
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b'{"status":"Error"}')
-
-        def run_hermes_server():
+        extension_dir = Path(__file__).parent
+        debugpy_path = extension_dir / "debugpy" / "src"
+        if debugpy_path.exists():
             try:
-                server = HTTPServer(('127.0.0.1', 5678), HermesHandler)
-                log.info("Hermes Listener running on port 5678")
-                server.serve_forever()
-            except Exception as e:
-                log.error(f"Could not start Hermes listener: {e}")
+                sys.path.insert(0, str(debugpy_path))
+                import debugpy
 
-        hermes_thread = threading.Thread(target=run_hermes_server, daemon=True)
-        hermes_thread.start()
+                debugpy.listen(("127.0.0.1", 5678), in_process_debug_adapter=True)  # type: ignore
+                log.info("Developer mode: debugpy listening on port 5678")
+            except ImportError:
+                pass
 
         pykrita_dir = extension_dir.parent
         if pykrita_dir.name != "pykrita" and not (pykrita_dir / ".git").exists():

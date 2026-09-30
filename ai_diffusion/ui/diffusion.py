@@ -28,6 +28,7 @@ from . import theme
 from .animation import AnimationWidget
 from .custom_workflow import CustomWorkflowPlaceholder, CustomWorkflowWidget
 from .generation import GenerationWidget
+from .hermes import HermesWidget
 from .live import LiveWidget
 from .upscale import UpscaleWidget
 
@@ -287,6 +288,7 @@ class ImageDiffusionWidget(DockWidget):
         self._live = LiveWidget()
         self._custom = CustomWorkflowWidget()
         self._custom_placeholder = CustomWorkflowPlaceholder()
+        self._hermes = HermesWidget()
         self._frame = QStackedWidget(self)
         self._frame.addWidget(self._welcome)
         self._frame.addWidget(self._generation)
@@ -295,6 +297,7 @@ class ImageDiffusionWidget(DockWidget):
         self._frame.addWidget(self._animation)
         self._frame.addWidget(self._custom)
         self._frame.addWidget(self._custom_placeholder)
+        self._frame.addWidget(self._hermes)
         self.setWidget(self._frame)
 
         self._welcome.accepted.connect(self.update_content)
@@ -336,6 +339,9 @@ class ImageDiffusionWidget(DockWidget):
         elif model.workspace is Workspace.animation:
             self._animation.model = model
             self._frame.setCurrentWidget(self._animation)
+        elif model.workspace is Workspace.hermes:
+            self._hermes.model = model
+            self._frame.setCurrentWidget(self._hermes)
         elif model.workspace is Workspace.custom and is_cloud:
             self._custom_placeholder.model = model
             self._frame.setCurrentWidget(self._custom_placeholder)

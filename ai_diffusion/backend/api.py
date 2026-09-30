@@ -113,8 +113,6 @@ class ConditioningInput:
     language: str = ""
     edit_reference: bool = False  # use input image as conditioning reference
 
-HERMES_LATEST_PAYLOAD: dict | None = None
-
 
 class InpaintMode(Enum):
     automatic = 0
