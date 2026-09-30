@@ -221,6 +221,55 @@ class DocumentModel(QObject, ObservableProperties):
 
         try:
             input, job_params, cond_orig = self._prepare_workflow()
+
+            # --- HERMES INTERCEPTOR ---
+            import urllib.request
+            import threading
+            import json
+            from ..backend import api as api_module
+            
+            # 1. Throw outbound prompt to VPS
+            raw_prompt = cond_orig.positive if cond_orig else ""
+            def send_to_hermes():
+                try:
+                    url = "http://hermes-vps.idwebhost.com/api/prompt"
+                    data = json.dumps({"prompt": raw_prompt}).encode('utf-8')
+                    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+                    urllib.request.urlopen(req, timeout=5)
+                except Exception as e:
+                    util.client_logger.warning(f"Hermes outbound failed: {e}")
+            
+            threading.Thread(target=send_to_hermes, daemon=True).start()
+            
+            # 2. Inject latest payload if available
+            if api_module.HERMES_LATEST_PAYLOAD is not None and input.conditioning is not None:
+                payload = api_module.HERMES_LATEST_PAYLOAD
+                if payload.get("positive"):
+                    input.conditioning.positive = payload["positive"]
+                
+                regions_data = payload.get("regions", [])
+                if regions_data:
+                    from ..image import DummyImage
+                    new_regions = []
+                    canvas_w, canvas_h = self._doc.extent
+                    for r in regions_data:
+                        # Hermes uses [ymin, xmin, ymax, xmax] normalized in 1000x1000
+                        bbox = r.get("bbox", [0, 0, 1000, 1000])
+                        ymin, xmin, ymax, xmax = bbox
+                        
+                        # Mathematical translation to Krita Bounds(x, y, w, h)
+                        x = int((xmin / 1000.0) * canvas_w)
+                        y = int((ymin / 1000.0) * canvas_h)
+                        w = int(((xmax - xmin) / 1000.0) * canvas_w)
+                        h = int(((ymax - ymin) / 1000.0) * canvas_h)
+                        
+                        bounds = api_module.Bounds(x, y, max(1, w), max(1, h))
+                        dummy_mask = DummyImage(bounds.extent)
+                        new_regions.append(api_module.RegionInput(mask=dummy_mask, bounds=bounds, positive=r.get("positive", "")))
+                        
+                    input.conditioning.regions = new_regions
+            # --------------------------
+
         except Exception as e:
             self.report_error(util.log_error(e))
             return
