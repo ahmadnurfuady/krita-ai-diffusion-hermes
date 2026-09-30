@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 
 from krita import Krita
@@ -1187,9 +1188,9 @@ class HermesSettings(SettingsTab):
         self._layout.addStretch()
 
     def _test_connection(self):
-        url = self.values.get("hermes_url", "").strip()
-        model_name = self.values.get("hermes_model", "").strip()
-        api_key = self.values.get("hermes_api_key", "").strip()
+        url = self._widgets["hermes_url"].value.strip()
+        model_name = self._widgets["hermes_model"].value.strip()
+        api_key = self._widgets["hermes_api_key"].value.strip()
         if not url:
             self._test_status.setText("❌ " + _("Please enter a URL first."))
             self._test_status.setStyleSheet(f"color: {red};")
@@ -1199,17 +1200,46 @@ class HermesSettings(SettingsTab):
         self._test_status.setText("⏳ " + _("Connecting..."))
         self._test_status.setStyleSheet(f"color: {yellow};")
 
-        client = HermesClient(url, model_name, api_key)
-
         async def do_check():
-            ok, msg = await client.check_connection()
-            if ok:
-                self._test_status.setText(f"✅ {msg}")
+            import ssl
+            import urllib.request
+
+            try:
+                base = url.rstrip("/")
+                if base.endswith("/v1"):
+                    models_url = f"{base}/models"
+                else:
+                    models_url = f"{base}/v1/models"
+
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                if "openrouter.ai" in models_url:
+                    headers["HTTP-Referer"] = "https://github.com/Acly/krita-ai-diffusion"
+                    headers["X-Title"] = "Krita AI Diffusion Hermes Agent"
+
+                req = urllib.request.Request(models_url, headers=headers, method="GET")
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+
+                loop = asyncio.get_event_loop()
+
+                def do_request():
+                    with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+                        return resp.status
+
+                status = await loop.run_in_executor(None, do_request)
+                model_display = model_name or "(default)"
+                self._test_status.setText(
+                    f"✅ Connected successfully! Model: {model_display}"
+                )
                 self._test_status.setStyleSheet(f"color: {green};")
-            else:
-                self._test_status.setText(f"❌ {msg}")
+            except Exception as e:
+                self._test_status.setText(f"❌ {e}")
                 self._test_status.setStyleSheet(f"color: {red};")
-            self._test_button.setEnabled(True)
+            finally:
+                self._test_button.setEnabled(True)
 
         eventloop.run(do_check())
 

@@ -438,10 +438,15 @@ class HermesClient:
             return response
         except Exception as e:
             log.error(f"Hermes API call failed: {e}")
-            error_msg = HermesMessage(
-                HermesRole.assistant,
-                f"Connection error: {e}. Please check the Hermes server URL in settings.",
-            )
+            error_str = str(e)
+            if "429" in error_str:
+                msg = (
+                    "Rate limited (429) after retries. The model's rate limit is very "
+                    "strict. Try waiting a minute, or switch to a non-free model."
+                )
+            else:
+                msg = f"Connection error: {e}. Please check the Hermes server URL in settings."
+            error_msg = HermesMessage(HermesRole.assistant, msg)
             self._conversation.append(error_msg)
             return HermesResponse(error_msg)
 
@@ -461,6 +466,7 @@ class HermesClient:
 
     async def _call_api(self) -> HermesResponse:
         import ssl
+        import urllib.error
         import urllib.request
 
         messages = self._build_messages()
@@ -488,33 +494,73 @@ class HermesClient:
             headers["HTTP-Referer"] = "https://github.com/Acly/krita-ai-diffusion"
             headers["X-Title"] = "Krita AI Diffusion Hermes Agent"
 
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers=headers,
-            method="POST",
-        )
-
         loop = asyncio.get_event_loop()
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
-        def do_request():
-            with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+        max_retries = 5
+        base_delay = 2.0
 
-        response_data = await loop.run_in_executor(None, do_request)
-        return self._parse_response(response_data)
+        for attempt in range(max_retries + 1):
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers=headers,
+                method="POST",
+            )
+
+            def do_request():
+                with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+
+            try:
+                response_data = await loop.run_in_executor(None, do_request)
+                return self._parse_response(response_data)
+            except urllib.error.HTTPError as e:
+                error_body = ""
+                try:
+                    error_body = e.read().decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+                if e.code == 429 and attempt < max_retries:
+                    retry_after = e.headers.get("Retry-After") if e.headers else None
+                    if retry_after:
+                        try:
+                            delay = float(retry_after)
+                        except ValueError:
+                            delay = base_delay * (2**attempt)
+                    else:
+                        delay = base_delay * (2**attempt)
+                    delay = min(delay, 60.0)
+                    log.warning(
+                        f"Rate limited (429), retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    log.error(f"HTTP {e.code} error body: {error_body[:500]}")
+                    raise
 
     def _build_messages(self) -> list[dict]:
         messages = [{"role": "system", "content": self._system_prompt}]
         for msg in self._conversation:
-            entry: dict[str, Any] = {"role": msg.role.value, "content": msg.content}
-            if msg.tool_calls:
-                entry["tool_calls"] = msg.tool_calls
-            if msg.tool_call_id:
-                entry["tool_call_id"] = msg.tool_call_id
+            if msg.role == HermesRole.tool_result:
+                # OpenAI API expects role "tool" with tool_call_id
+                entry: dict[str, Any] = {
+                    "role": "tool",
+                    "content": msg.content,
+                    "tool_call_id": msg.tool_call_id or "",
+                }
+            elif msg.role == HermesRole.assistant and msg.tool_calls:
+                # Assistant message with tool_calls: content should be null if empty
+                entry = {
+                    "role": "assistant",
+                    "content": msg.content or None,
+                    "tool_calls": msg.tool_calls,
+                }
+            else:
+                entry = {"role": msg.role.value, "content": msg.content}
             if msg.name:
                 entry["name"] = msg.name
             messages.append(entry)
