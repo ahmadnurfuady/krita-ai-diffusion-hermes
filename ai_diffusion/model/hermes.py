@@ -16,7 +16,7 @@ from ..backend.hermes_client import (
 )
 from ..image import Bounds, Image
 from ..util import client_logger as log
-from .jobs import JobState
+from .jobs import Job, JobKind, JobState
 from .properties import ObservableProperties, Property
 
 
@@ -113,6 +113,7 @@ class HermesModel(QObject, ObservableProperties):
             self._tool_execution_count += 1
             self.state = HermesState.executing_tools
 
+            tool_results: list[tuple[str, str]] = []
             for tool_call in response.tool_calls:
                 self.status_text = f"Executing: {tool_call.name}..."
                 tool_msg = ChatMessage(
@@ -129,9 +130,10 @@ class HermesModel(QObject, ObservableProperties):
                 self._messages.append(result_msg)
                 self.message_added.emit(result_msg)
 
-                next_response = await self._client.send_tool_result(tool_call.id, result)
-                await self._process_response(next_response)
-                return  # recursion handles continuation
+                tool_results.append((tool_call.id, result))
+
+            next_response = await self._client.send_tool_results(tool_results)
+            await self._process_response(next_response)
         else:
             self.state = HermesState.idle
             self.status_text = ""
@@ -180,6 +182,16 @@ class HermesModel(QObject, ObservableProperties):
 
     # ── Tool implementations ──────────────────────────────────────────
 
+    def _apply_job_to_layer(self, model, job: Job | None, layer_name: str | None = None):
+        if not job or not job.id:
+            return
+        try:
+            model.apply_generated_result(job.id, 0)
+            if layer_name and model.layers.active:
+                model.layers.active.name = f"[Hermes] {layer_name}"
+        except Exception as e:
+            log.warning(f"Failed to apply generated result to layer: {e}")
+
     async def _tool_generate_image(self, args: dict) -> str:
         model = self._document_model
         if model is None:
@@ -204,18 +216,18 @@ class HermesModel(QObject, ObservableProperties):
                 model.seed = seed
                 model.fixed_seed = True
 
+            prev_ids = {j.id for j in model.jobs if j.id}
             model.generate()
 
             # Wait for generation to complete
-            await self._wait_for_generation(model)
+            job = await self._wait_for_generation(model, prev_ids)
 
-            if target_layers:
-                result_text = f"Generated image with prompt: '{prompt[:80]}...'. "
-                result_text += f"Requested layers: {', '.join(target_layers)}"
+            layer_name = target_layers[0] if target_layers else None
+            if job:
+                self._apply_job_to_layer(model, job, layer_name)
+                return f"Generated image successfully and applied to layer (Prompt: '{prompt[:80]}...')"
             else:
-                result_text = f"Generated image successfully with prompt: '{prompt[:80]}...'"
-
-            return result_text
+                return f"Generated image successfully with prompt: '{prompt[:80]}...'"
 
         except Exception as e:
             return f"Generation failed: {e}"
@@ -232,6 +244,7 @@ class HermesModel(QObject, ObservableProperties):
         negative = args.get("negative_prompt", "")
         layer_name = args["layer_name"]
         strength = args.get("strength", 1.0)
+        seed = args.get("seed", -1)
 
         try:
             self.state = HermesState.generating
@@ -241,18 +254,23 @@ class HermesModel(QObject, ObservableProperties):
             if negative:
                 model.regions.negative = negative
             model.strength = strength
+            if seed >= 0:
+                model.seed = seed
+                model.fixed_seed = True
 
+            prev_ids = {j.id for j in model.jobs if j.id}
             model.generate()
-            await self._wait_for_generation(model)
+            job = await self._wait_for_generation(model, prev_ids)
 
-            # Rename the generated layer
-            if model.layers.active:
-                model.layers.active.name = f"[Hermes] {layer_name}"
-
-            return f"Generated to layer '{layer_name}' with prompt: '{prompt[:60]}...'"
+            if job:
+                self._apply_job_to_layer(model, job, layer_name)
+                return f"Generated image and applied to layer '{layer_name}' (Prompt: '{prompt[:60]}...')"
+            else:
+                return f"Generation completed for layer '{layer_name}'"
         except Exception as e:
             return f"Generate to layer failed: {e}"
         finally:
+            model.fixed_seed = False
             self.state = HermesState.executing_tools
 
     async def _tool_inpaint_region(self, args: dict) -> str:
@@ -276,11 +294,12 @@ class HermesModel(QObject, ObservableProperties):
             model.regions.positive = prompt
             model.strength = strength
 
+            prev_ids = {j.id for j in model.jobs if j.id}
             model.generate()
-            await self._wait_for_generation(model)
+            job = await self._wait_for_generation(model, prev_ids)
 
-            if layer_name and model.layers.active:
-                model.layers.active.name = f"[Hermes] {layer_name}"
+            if job:
+                self._apply_job_to_layer(model, job, layer_name or f"Inpaint ({x},{y})")
 
             # Clear the selection
             self._clear_krita_selection()
@@ -310,11 +329,12 @@ class HermesModel(QObject, ObservableProperties):
             model.regions.positive = prompt
             model.strength = strength
 
+            prev_ids = {j.id for j in model.jobs if j.id}
             model.generate()
-            await self._wait_for_generation(model)
+            job = await self._wait_for_generation(model, prev_ids)
 
-            if layer_name and model.layers.active:
-                model.layers.active.name = f"[Hermes] {layer_name}"
+            if job:
+                self._apply_job_to_layer(model, job, layer_name or "Inpaint Selection")
 
             return f"Inpainted selection with: '{prompt[:60]}...'"
         except Exception as e:
@@ -493,13 +513,13 @@ class HermesModel(QObject, ObservableProperties):
                     model.seed = seed
                     model.fixed_seed = True
 
+                prev_ids = {j.id for j in model.jobs if j.id}
                 model.generate()
-                await self._wait_for_generation(model)
+                job = await self._wait_for_generation(model, prev_ids)
 
-                if model.layers.active:
-                    model.layers.active.name = f"[Hermes] {layer_name}"
-
-                results.append(layer_name)
+                if job:
+                    self._apply_job_to_layer(model, job, layer_name)
+                    results.append(layer_name)
 
             return f"Generated {len(results)} layers: {', '.join(results)}"
         except Exception as e:
@@ -526,7 +546,10 @@ class HermesModel(QObject, ObservableProperties):
             log.debug(f"Could not read active layer: {e}")
 
         try:
-            ctx.style_name = model.style.name
+            if hasattr(model, "active_style") and model.active_style:
+                ctx.style_name = model.active_style.name
+            elif model.style:
+                ctx.style_name = model.style.name
         except Exception as e:
             log.debug(f"Could not read style name: {e}")
 
@@ -555,7 +578,9 @@ class HermesModel(QObject, ObservableProperties):
 
         return ctx
 
-    async def _wait_for_generation(self, model, timeout: float = 300.0):
+    async def _wait_for_generation(
+        self, model, previous_job_ids: set[str] | None = None, timeout: float = 300.0
+    ) -> Job | None:
         elapsed = 0.0
         interval = 0.5
         # Wait for the job to be enqueued
@@ -564,10 +589,32 @@ class HermesModel(QObject, ObservableProperties):
             if not model.jobs.any_executing():
                 pending = [j for j in model.jobs if j.state is JobState.queued]
                 if not pending:
-                    return
+                    break
             await asyncio.sleep(interval)
             elapsed += interval
-        raise TimeoutError("Generation timed out")
+        else:
+            raise TimeoutError("Generation timed out")
+
+        prev = previous_job_ids or set()
+        for job in reversed(list(model.jobs)):
+            if (
+                job.kind is JobKind.diffusion
+                and job.state is JobState.finished
+                and len(job.results) > 0
+                and job.id not in prev
+            ):
+                return job
+
+        # Fallback to latest finished diffusion job
+        for job in reversed(list(model.jobs)):
+            if (
+                job.kind is JobKind.diffusion
+                and job.state is JobState.finished
+                and len(job.results) > 0
+            ):
+                return job
+
+        return None
 
     def _set_krita_selection(self, x: int, y: int, w: int, h: int):
         try:

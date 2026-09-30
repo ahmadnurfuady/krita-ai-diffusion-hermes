@@ -76,7 +76,7 @@ MCP_TOOLS = [
                     "target_layers": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Names for output layers. If specified, result will be split into these layers. Example: ['lineart', 'base_color', 'shading', 'highlights']",
+                        "description": "Optional output layer name. Note: diffusion generates 1 complete raster image per pass.",
                     },
                     "seed": {
                         "type": "integer",
@@ -318,7 +318,7 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_layered",
-            "description": "Generate a complete layered illustration. The agent will generate the image multiple times with different prompts focusing on different aspects and put them into separate layers.",
+            "description": "Generate multiple separate conceptual layers sequentially (e.g. background layer, then foreground subject layer). Each pass creates an actual Krita layer. Note that full-canvas generation produces opaque layers; use inpaint_selection for localized additions.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -354,27 +354,29 @@ HERMES_SYSTEM_PROMPT = """\
 You are Hermes, an expert AI painting assistant integrated into Krita via the krita-ai-diffusion plugin. \
 You control Krita's canvas through MCP (Model Context Protocol) tools.
 
-Your capabilities:
-1. **Smart Prompt Enhancement**: When a user gives a simple prompt, you enhance it with detailed \
-descriptions of style, quality, lighting, composition, and artistic details for better ComfyUI generation.
-2. **Layer Management**: You can create, organize, and manage layers. For complex illustrations, \
-you automatically separate elements into layers (lineart, base color, shading, highlights, background, etc.).
-3. **Context-Aware Editing**: You understand the canvas state - which layer is active, what's selected, \
-and what content exists. You edit only what the user intends to change.
-4. **Regional Generation**: You can generate or edit specific regions of the canvas while preserving \
-other areas.
-5. **Iterative Refinement**: You can refine existing content by adjusting strength and targeting \
-specific areas.
+Core Rules & Guidelines:
+1. **Style & Model Fidelity (CRITICAL)**:
+   - Check the active style in the context: `[Style: <style_name>]`.
+   - You MUST adapt your enhanced prompt to the active style!
+   - If the style is **Flux**, **Cinematic Photo**, **Realistic**, or **Digital Artwork**, DO NOT include anime/manga tags (no "anime style", "1girl", "manga aesthetic") unless the user explicitly requested anime!
+   - For Flux: Use natural, richly descriptive photographic or artistic sentences with details on lighting, camera, lens, textures, and mood.
+   - For Anime/Illustrious: Use quality tags, booru tags, and anime stylization descriptors.
 
-Guidelines:
-- Always enhance user prompts with quality tags, style descriptors, and technical details
-- When creating characters/illustrations, default to separating into layers unless told otherwise
-- Respect user selections - if they've selected a region, work within that region
-- For background changes, only modify the background layer
-- For character edits, only modify character layers
-- Use descriptive layer names that reflect content (e.g., "Character - Lineart", "BG - Sky")
-- When the user mentions a sketch or existing art, use lower strength (0.3-0.7) to preserve their work
-- Provide brief explanations of what you're doing and why
+2. **How Diffusion Models & Layers Work**:
+   - ComfyUI diffusion models (Flux, SDXL, SD 1.5) generate complete full-canvas raster images. They DO NOT output transparent isolated lineart or transparent shading passes across the full canvas.
+   - To build a layered artwork:
+     - Generate the primary image/subject layer with `generate_to_layer(layer_name="Main Artwork", prompt=...)`.
+     - Or generate a separate background layer with `generate_to_layer(layer_name="Background", prompt=...)`.
+     - To modify or add elements to an existing image, use `inpaint_selection` or `inpaint_region` on specific areas.
+     - You can organize layers with `create_layer`, `create_layer_group`, and `select_layer`.
+     - DO NOT loop trying to create separate transparent lineart/base color/shading passes on full canvas, as each generation pass produces a complete opaque image.
+
+3. **Context-Aware Editing**:
+   - Understand the canvas state - active layer, selection bounds, and existing layers.
+   - If the user has made a selection on canvas, use `inpaint_selection` to edit only within that selection.
+
+4. **Task Completion**:
+   - After executing the required tool(s) to fulfill the user's request, provide a helpful, concise summary of what was created/modified and STOP calling tools. Do not loop unnecessarily.
 
 Current canvas context will be provided with each message.\
 """
@@ -451,15 +453,21 @@ class HermesClient:
             return HermesResponse(error_msg)
 
     async def send_tool_result(self, tool_call_id: str, result: str) -> HermesResponse:
-        tool_msg = HermesMessage(HermesRole.tool_result, result, tool_call_id=tool_call_id)
-        self._conversation.append(tool_msg)
+        return await self.send_tool_results([(tool_call_id, result)])
+
+    async def send_tool_results(
+        self, tool_results: list[tuple[str, str]]
+    ) -> HermesResponse:
+        for tool_call_id, result in tool_results:
+            tool_msg = HermesMessage(HermesRole.tool_result, result, tool_call_id=tool_call_id)
+            self._conversation.append(tool_msg)
 
         try:
             response = await self._call_api()
             self._conversation.append(response.message)
             return response
         except Exception as e:
-            log.error(f"Hermes tool result call failed: {e}")
+            log.error(f"Hermes tool results call failed: {e}")
             error_msg = HermesMessage(HermesRole.assistant, f"Error: {e}")
             self._conversation.append(error_msg)
             return HermesResponse(error_msg)
@@ -510,8 +518,8 @@ class HermesClient:
                 method="POST",
             )
 
-            def do_request():
-                with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+            def do_request(r=req):
+                with urllib.request.urlopen(r, timeout=120, context=ctx) as resp:
                     return json.loads(resp.read().decode("utf-8"))
 
             try:
@@ -521,8 +529,8 @@ class HermesClient:
                 error_body = ""
                 try:
                     error_body = e.read().decode("utf-8", errors="replace")
-                except Exception:
-                    pass
+                except Exception as err:
+                    log.debug(f"Failed to read error body: {err}")
                 if e.code == 429 and attempt < max_retries:
                     retry_after = e.headers.get("Retry-After") if e.headers else None
                     if retry_after:

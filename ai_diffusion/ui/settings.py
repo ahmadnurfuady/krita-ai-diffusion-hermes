@@ -39,7 +39,6 @@ from .. import __version__, eventloop, util
 from ..backend import resources
 from ..backend.client import Client, MissingResources, User
 from ..backend.cloud_client import CloudClient
-from ..backend.hermes_client import HermesClient
 from ..backend.resources import Arch, ResourceId
 from ..backend.server import Server, ServerState
 from ..localization import Localization
@@ -1229,7 +1228,7 @@ class HermesSettings(SettingsTab):
                     with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
                         return resp.status
 
-                status = await loop.run_in_executor(None, do_request)
+                await loop.run_in_executor(None, do_request)
                 model_display = model_name or "(default)"
                 self._test_status.setText(
                     f"✅ Connected successfully! Model: {model_display}"
