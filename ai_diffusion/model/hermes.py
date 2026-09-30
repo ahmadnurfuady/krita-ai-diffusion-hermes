@@ -513,9 +513,23 @@ class HermesModel(QObject, ObservableProperties):
                     model.seed = seed
                     model.fixed_seed = True
 
+                region = layer_spec.get("region")
+                has_region = False
+                if region and isinstance(region, dict):
+                    rx = int(region.get("x", 0))
+                    ry = int(region.get("y", 0))
+                    rw = int(region.get("width", 0))
+                    rh = int(region.get("height", 0))
+                    if rw > 0 and rh > 0:
+                        self._set_krita_selection(rx, ry, rw, rh)
+                        has_region = True
+
                 prev_ids = {j.id for j in model.jobs if j.id}
                 model.generate()
                 job = await self._wait_for_generation(model, prev_ids)
+
+                if has_region:
+                    self._clear_krita_selection()
 
                 if job:
                     self._apply_job_to_layer(model, job, layer_name)

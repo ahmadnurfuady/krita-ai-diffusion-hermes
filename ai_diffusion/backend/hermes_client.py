@@ -337,6 +337,16 @@ MCP_TOOLS = [
                                     "description": "Additional prompt appended for this layer's generation pass.",
                                 },
                                 "strength": {"type": "number", "default": 1.0},
+                                "region": {
+                                    "type": "object",
+                                    "properties": {
+                                        "x": {"type": "integer"},
+                                        "y": {"type": "integer"},
+                                        "width": {"type": "integer"},
+                                        "height": {"type": "integer"},
+                                    },
+                                    "description": "Optional bounding box for inpainting this layer. Omit for full-canvas background.",
+                                },
                             },
                         },
                         "description": "Layer definitions. Each gets its own generation pass.",
@@ -362,21 +372,22 @@ Core Rules & Guidelines:
    - For Flux: Use natural, richly descriptive photographic or artistic sentences with details on lighting, camera, lens, textures, and mood.
    - For Anime/Illustrious: Use quality tags, booru tags, and anime stylization descriptors.
 
-2. **How Diffusion Models & Layers Work**:
-   - ComfyUI diffusion models (Flux, SDXL, SD 1.5) generate complete full-canvas raster images. They DO NOT output transparent isolated lineart or transparent shading passes across the full canvas.
-   - To build a layered artwork:
-     - Generate the primary image/subject layer with `generate_to_layer(layer_name="Main Artwork", prompt=...)`.
-     - Or generate a separate background layer with `generate_to_layer(layer_name="Background", prompt=...)`.
-     - To modify or add elements to an existing image, use `inpaint_selection` or `inpaint_region` on specific areas.
-     - You can organize layers with `create_layer`, `create_layer_group`, and `select_layer`.
-     - DO NOT loop trying to create separate transparent lineart/base color/shading passes on full canvas, as each generation pass produces a complete opaque image.
+2. **Multi-Pass Layered Illustration Strategy (CRITICAL)**:
+   - Users expect you to create structured, multi-layer artworks in Krita rather than just 1 flat image!
+   - When asked to create an illustration, character, or scene from scratch:
+     - **Pass 1 [Background Layer]**: Generate the environment/scenery first using `generate_to_layer(layer_name="Background", prompt="...")`. Ensure the prompt describes ONLY the setting/background without the main subject.
+     - **Pass 2 [Character / Main Subject Layer]**: Add the character on top of the background by inpainting the subject into the desired canvas area using `inpaint_region(prompt="<detailed subject prompt in setting>", x=..., y=..., width=..., height=..., strength=0.95, layer_name="Character")`.
+       (Calculate coordinates based on canvas dimensions from context, e.g. on a 1024x1024 canvas, a centered character is typically x=200, y=100, width=624, height=850).
+     - **Pass 3 [Atmosphere / Effects / Foreground] (optional)**: Add fog, glowing magic, particle effects, or foreground overlay with another `inpaint_region` or create an empty paint layer using `create_layer(name="Effects")`.
+   - Alternatively, you can use `generate_layered` specifying layer items (Layer 1 without region for Background, Layer 2 with a targeted `region` for Character/Subject).
+   - If the user explicitly asks for a single fast generation or simple edit, you may generate directly to the active layer.
 
 3. **Context-Aware Editing**:
    - Understand the canvas state - active layer, selection bounds, and existing layers.
    - If the user has made a selection on canvas, use `inpaint_selection` to edit only within that selection.
 
 4. **Task Completion**:
-   - After executing the required tool(s) to fulfill the user's request, provide a helpful, concise summary of what was created/modified and STOP calling tools. Do not loop unnecessarily.
+   - After executing your multi-pass workflow to fulfill the user's request, provide a concise summary of the created layers and what each contains, then STOP calling tools. Do not loop unnecessarily.
 
 Current canvas context will be provided with each message.\
 """
